@@ -102,7 +102,7 @@ def test_tie_and_super_over(parsed, totals):
 def test_no_result_single_innings(parsed):
     matches, d = parsed
     m = matches.set_index("match_id").loc[1473495]
-    assert m["result"] == "no result" and m["winner"] is None
+    assert m["result"] == "no result" and pd.isna(m["winner"])
     assert set(d.loc[d["match_id"] == 1473495, "innings"]) == {1}
 
 

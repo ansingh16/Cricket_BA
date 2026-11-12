@@ -7,6 +7,25 @@ name = "cricket_ba"
 version = "0.1.0"
 description = "Hierarchical Bayesian player effects for IPL wickets, from Cricsheet data"
 requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "pyarrow",
+    "scikit-learn",
+    "matplotlib",
+    "pymc>=5.16,<6",
+    "arviz<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "jupyterlab",
+    "ipykernel",
+    "nbconvert",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

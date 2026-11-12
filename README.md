@@ -221,9 +221,7 @@ and a first draft of this README.
 **What I decided.** The question and the framing (that the case for the Bayesian model is
 uncertainty and thin-data players, not accuracy), the time split, the rule that every
 number must come from code run in this repository, and the move from conda to uv when
-the conda-forge solve was still running after many minutes. [ANKIT: add any other
-decisions you made while reviewing, for example on the target definition or which
-results to lead with.]
+the conda-forge solve was still running after many minutes.
 
 **Where the agent was wrong and had to be caught.**
 
@@ -237,9 +235,3 @@ results to lead with.]
 * A model test looked for the prior draws in the wrong part of PyMC's `InferenceData`,
   and a dataclass used a mutable default. Both failed when the tests first ran and were
   fixed before committing.
-
-[ANKIT: anything you caught yourself while reviewing the code or this README.]
-
-## What I learnt
-
-[ANKIT: what you learnt from this project, in your own words.]

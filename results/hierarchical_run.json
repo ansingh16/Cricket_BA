@@ -1,23 +1,30 @@
 {
+  "seed": 20261112,
   "sampler": {
     "draws": 1000,
     "tune": 1000,
     "chains": 4,
     "cores": 4,
-    "target_accept": 0.9,
-    "random_seed": 20261112
+    "target_accept": 0.9
   },
   "diagnostics": {
     "divergences": 0,
     "max_rhat": 1.01,
     "min_ess_bulk": 779.0,
     "min_ess_tail": 764.0,
-    "sampling_minutes": 3.0
+    "sampling_minutes": 2.89
   },
-  "use_venue": false,
+  "baseline": {
+    "features": [
+      "batter_id",
+      "bowler_id",
+      "phase"
+    ],
+    "C": 0.03
+  },
   "n_cells": 37970,
   "n_train_balls": 234995,
-  "ppc_sd_quantile": 0.05,
+  "n_test_balls": 32806,
   "pymc": "5.28.5",
   "arviz": "0.23.4"
 }

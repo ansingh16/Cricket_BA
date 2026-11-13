@@ -1,8 +1,11 @@
 """Hierarchical logistic model with partially pooled batter and bowler effects.
 
     logit p = alpha[phase] + sigma_bat * z_bat[batter] + sigma_bowl * z_bowl[bowler]
+              + beta * (season - 2016) / 10
 
-Non-centred: z ~ N(0, 1). The likelihood is binomial on (batter, bowler, phase) cells,
+Non-centred: z ~ N(0, 1). The linear season term was chosen on 2023 as a validation season
+in ``notebooks/04_season_drift.ipynb``. The likelihood is binomial on
+(batter, bowler, phase, season) cells,
 which gives the same posterior as a Bernoulli likelihood on the individual balls, since
 the two differ by a constant that does not involve the parameters
 (``tests/test_hierarchical.py`` checks this).
@@ -19,8 +22,14 @@ from scipy.special import expit, logit
 
 from cricket_ba.features import PHASES
 
-KEYS = ["batter_id", "bowler_id", "phase"]
-SAMPLER = dict(draws=1000, tune=1000, chains=4, cores=4, target_accept=0.9)
+KEYS = ["batter_id", "bowler_id", "phase", "season"]
+SAMPLER = dict(draws=1000, tune=1000, chains=4, cores=4, target_accept=0.95)
+SEASON_CENTRE = 2016
+
+
+def season_x(season) -> np.ndarray:
+    """Season on the trend's scale: decades from 2016."""
+    return (np.asarray(season, dtype=float) - SEASON_CENTRE) / 10
 
 
 @dataclass
@@ -54,10 +63,12 @@ def build_model(cells: pd.DataFrame, idx: Index, observed: bool = True) -> pm.Mo
         z_bowl = pm.Normal("z_bowl", 0, 1, dims="bowler")
         bat = pm.Deterministic("bat", sigma_bat * z_bat, dims="batter")
         bowl = pm.Deterministic("bowl", sigma_bowl * z_bowl, dims="bowler")
+        beta = pm.Normal("beta", 0, 0.5)
         eta = (
             alpha[cells["phase_idx"].to_numpy()]
             + bat[cells["bat_idx"].to_numpy()]
             + bowl[cells["bowl_idx"].to_numpy()]
+            + beta * season_x(cells["season"])
         )
         pm.Binomial(
             "k",
@@ -83,6 +94,7 @@ class Draws:
     bowl: np.ndarray  # bowlers x S
     sigma_bat: np.ndarray  # S
     sigma_bowl: np.ndarray  # S
+    beta: np.ndarray  # S
 
     @classmethod
     def from_idata(cls, idata) -> Draws:
@@ -93,6 +105,7 @@ class Draws:
             bowl=post["bowl"].transpose("bowler", "s").to_numpy(),
             sigma_bat=post["sigma_bat"].to_numpy(),
             sigma_bowl=post["sigma_bowl"].to_numpy(),
+            beta=post["beta"].to_numpy(),
         )
 
 
@@ -100,7 +113,8 @@ def predict_draws(cells: pd.DataFrame, idx: Index, draws: Draws, seed: int) -> n
     """Wicket probability per cell and posterior draw (cells x S).
 
     A player unseen in training gets, in each draw, a new effect from N(0, sigma) for
-    that draw, so his uncertainty includes not knowing who he is.
+    that draw, so the uncertainty includes not knowing who the player is. The season trend is
+    extrapolated linearly to seasons after training.
     """
     rng = np.random.default_rng(seed)
     S = draws.alpha.shape[1]
@@ -113,4 +127,5 @@ def predict_draws(cells: pd.DataFrame, idx: Index, draws: Draws, seed: int) -> n
     eta = draws.alpha[idx.phases.get_indexer(cells["phase"])]
     eta += bat_all[bat_index.get_indexer(cells["batter_id"])]
     eta += bowl_all[bowl_index.get_indexer(cells["bowler_id"])]
+    eta += season_x(cells["season"])[:, None] * draws.beta
     return expit(eta)

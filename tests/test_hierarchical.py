@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 import pymc as pm
+from scipy.special import logit
 from scipy.stats import bernoulli
 
 from cricket_ba.hierarchical import Draws, aggregate, build_model, make_index, predict_draws
@@ -15,6 +16,7 @@ def _balls(seed=0, n=3000):
             "batter_id": r.choice([f"b{i}" for i in range(15)], n),
             "bowler_id": r.choice([f"w{i}" for i in range(10)], n),
             "phase": r.choice(["powerplay", "middle", "death"], n),
+            "season": r.choice([2010, 2016, 2023], n),
             "wicket": r.binomial(1, 0.05, n),
         }
     )
@@ -28,6 +30,7 @@ def _point(idx, seed):
         "sigma_bowl_log__": np.log(r.uniform(0.1, 0.6)),
         "z_bat": r.normal(size=len(idx.batters)),
         "z_bowl": r.normal(size=len(idx.bowlers)),
+        "beta": r.normal(0, 0.3),
     }
 
 
@@ -50,6 +53,7 @@ def test_binomial_on_cells_equals_bernoulli_on_balls_up_to_a_constant():
             pt["alpha"][b["phase_idx"]]
             + np.exp(pt["sigma_bat_log__"]) * pt["z_bat"][b["bat_idx"]]
             + np.exp(pt["sigma_bowl_log__"]) * pt["z_bowl"][b["bowl_idx"]]
+            + pt["beta"] * (b["season"] - 2016) / 10
         )
         return bernoulli.logpmf(b["wicket"], 1 / (1 + np.exp(-eta))).sum()
 
@@ -81,12 +85,14 @@ def test_predictions_cover_unseen_players():
         bowl=r.normal(0, 0.3, (len(idx.bowlers), S)),
         sigma_bat=np.full(S, 0.3),
         sigma_bowl=np.full(S, 0.3),
+        beta=np.full(S, 0.2),
     )
     test = pd.DataFrame(
         {
             "batter_id": ["b0", "new_batter", "b1"],
             "bowler_id": ["w0", "w1", "new_bowler"],
             "phase": ["death", "middle", "powerplay"],
+            "season": [2024, 2024, 2025],
             "wicket": [0, 1, 0],
         }
     )
@@ -96,3 +102,27 @@ def test_predictions_cover_unseen_players():
     # an unseen batter's draws vary, because his effect is drawn fresh in each draw
     row = aggregate(test).reset_index(drop=True)
     assert p[row.index[row["batter_id"] == "new_batter"][0]].std() > 0
+
+
+def test_season_trend_shifts_predictions_by_beta_per_decade():
+    balls = _balls()
+    idx = make_index(balls)
+    S = 4
+    draws = Draws(
+        alpha=np.full((3, S), -3.0),
+        bat=np.zeros((len(idx.batters), S)),
+        bowl=np.zeros((len(idx.bowlers), S)),
+        sigma_bat=np.full(S, 0.3),
+        sigma_bowl=np.full(S, 0.3),
+        beta=np.full(S, 0.5),
+    )
+    cells = pd.DataFrame(
+        {
+            "batter_id": ["b0", "b0"],
+            "bowler_id": ["w0", "w0"],
+            "phase": ["middle"] * 2,
+            "season": [2016, 2026],
+        }
+    )
+    lp = logit(predict_draws(cells, idx, draws, seed=0))
+    assert np.allclose(lp[1] - lp[0], 0.5)

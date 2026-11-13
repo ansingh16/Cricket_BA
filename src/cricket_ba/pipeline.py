@@ -3,7 +3,7 @@
     python -m cricket_ba.pipeline            # or: make results
 
 Writes to ``results/`` and saves the posterior to ``models/hierarchical.nc``. MCMC takes
-about 15-20 minutes on 4 cores.
+about 5 minutes on 4 cores.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def run(json_dir: Path, out: Path, models: Path) -> None:
     name, C = baseline.choose(cv)
     feats = baseline.FEATURE_SETS[name]
     lr = baseline.logistic(feats, C).fit(train[feats], train["wicket"])
-    pred = test[["match_id", "batter_id", "bowler_id", "phase", "wicket"]].copy()
+    pred = test[["match_id", "batter_id", "bowler_id", "phase", "season", "wicket"]].copy()
     pred["p_overall"] = train["wicket"].mean()
     pred["p_logistic"] = lr.predict_proba(test[feats])[:, 1]
     cv.to_csv(out / "baseline_cv.csv", index=False)
@@ -66,7 +66,9 @@ def run(json_dir: Path, out: Path, models: Path) -> None:
     idata = hierarchical.fit(cells, idx, SEED)
     minutes = (time.time() - t0) / 60
     summ = az.summary(
-        idata, var_names=["alpha", "sigma_bat", "sigma_bowl", "z_bat", "z_bowl"], round_to=None
+        idata,
+        var_names=["alpha", "sigma_bat", "sigma_bowl", "beta", "z_bat", "z_bowl"],
+        round_to=None,
     )
     diag = {
         "divergences": int(idata.sample_stats["diverging"].sum()),
@@ -76,7 +78,9 @@ def run(json_dir: Path, out: Path, models: Path) -> None:
         "sampling_minutes": round(minutes, 2),
     }
     print("diagnostics:", diag)
-    params = az.summary(idata, var_names=["alpha", "sigma_bat", "sigma_bowl"], round_to=None)
+    params = az.summary(
+        idata, var_names=["alpha", "sigma_bat", "sigma_bowl", "beta"], round_to=None
+    )
     params.to_csv(out / "hierarchical_parameters.csv")
 
     draws = hierarchical.Draws.from_idata(idata)
@@ -95,6 +99,24 @@ def run(json_dir: Path, out: Path, models: Path) -> None:
 
     boot = match_bootstrap(pred, list(cols), n_boot=1000, seed=SEED)
     difference_interval(boot, "p_hier", "p_logistic").to_csv(out / "test_metric_differences.csv")
+
+    # ---- where the gap between predicted and observed sits ---------------------------
+    seen = {
+        "batter": np.where(pred["batter_id"].isin(train["batter_id"]), "seen", "new"),
+        "bowler": np.where(pred["bowler_id"].isin(train["bowler_id"]), "seen", "new"),
+    }
+    gap = (
+        pred.assign(**seen)
+        .groupby(["batter", "bowler"])
+        .agg(
+            balls=("wicket", "size"),
+            observed=("wicket", "mean"),
+            logistic=("p_logistic", "mean"),
+            hierarchical=("p_hier", "mean"),
+        )
+        .reset_index()
+    )
+    gap.to_csv(out / "test_gap_by_new_player.csv", index=False)
 
     # ---- by how much training data each player had -------------------------------------
     bat_n, bowl_n = train["batter_id"].value_counts(), train["bowler_id"].value_counts()
@@ -159,7 +181,9 @@ def run(json_dir: Path, out: Path, models: Path) -> None:
         + coef["phase_middle"]
         + coef[[f"batter_id_{b}" for b in idx.batters]].to_numpy()
     )
-    hb = expit(draws.alpha[1][None, :] + draws.bat)
+    # hierarchical estimates at the level of the last training season
+    last = hierarchical.season_x(train["season"].max())
+    hb = expit(draws.alpha[1][None, :] + draws.bat + last * draws.beta[None, :])
     est = pd.DataFrame(
         {
             "batter_id": idx.batters,

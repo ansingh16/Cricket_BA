@@ -216,6 +216,27 @@ well as role.
   percentile of the replicated spread with role and experience, and at the 2nd without
   them, in the notebook's version of the check.
 
+### Do batters change from season to season?
+
+`notebooks/06_time_varying.ipynb` lets each batter's effect follow a random walk over the
+training seasons, anchored at the last one, so a forecast adds one step per season ahead.
+Only batters with 300 or more training balls get a walk (144 when fitting on 2008 to
+2023). The rule, fixed before the notebook was run: keep the walk only if it lowers mean
+log loss over the five validation seasons.
+
+![Fitted season-by-season effects of the six batters with most balls](figures/batter_walks.png)
+
+* **A tie.** Both models have a mean validation log loss of 0.188385. The pooled
+  difference is -0.0000001 (95% interval -0.000006 to +0.000005), and on the test seasons
+  -0.000002 (-0.000012 to +0.000009).
+* **Batters barely drift.** The step per season is 0.015 on the logit scale (94% HDI 0 to
+  0.032), so about 0.05 over the 15 training steps, against a spread between batters of
+  0.17. The six longest careers have nearly flat paths.
+* **The decision.** Read literally, the rule picks the walk by 0.0000001, which is a
+  rounding difference. I kept the simpler fixed-effect model, which samples faster and
+  mixes better (worst bulk effective sample size 896 against 497). The package model is
+  unchanged.
+
 ## Limitations
 
 * **New batters are still under-predicted.** Batters first seen in 2024-25 were out on
@@ -228,8 +249,9 @@ well as role.
   predictive check puts the observed spread of batter rates (batters with 100 or more
   balls) in the lowest few percent of the replicated spread. Batting role was tested as a
   cause and is not it.
-* **Player skill is held fixed over 16 training seasons.** A batter's 2010 form counts
-  the same as his 2023 form. A time-varying effect would be the natural next step.
+* **Player skill is held fixed over the training seasons.** A random walk over seasons
+  was tested and gave no gain (see *Do batters change from season to season?*), but with
+  about 5% wickets per ball, small changes in form would be hard to detect.
 * **Bowler effects are small and hard to pin down** (pooling scale 0.067 against 0.172
   for batters, on the log-odds scale), so the bowler side of the model adds little.
 * **Venue was dropped** because cross-validation did not support it, and the package
@@ -251,6 +273,7 @@ well as role.
 | The remaining gap sat with one group | Split test balls by seen and new players (`04`) | Role and experience terms (`05`) | New batters out 6.3%; prediction 5.26% before, 5.69% after |
 | Role alone could not explain the new-batter gap | Split new and seen batters by role: newcomers were out more in every role (`05`) | Added IPL experience (earlier balls faced) | Fewer than 100 earlier balls: +0.20 logit (0.13 to 0.25) |
 | The two model families were chosen by different validation (one season against five) | 2023 and the test seasons disagreed about role and experience | Same five-season validation for both; disclosed as a change made after seeing the test | Role and experience chosen by both; test gains flagged as optimistic |
+| Does batter form drift between seasons? | Random-walk batter effects tested by five-season validation (`06`) | Kept the fixed-effect model | Tie to six decimal places; drift about 0.05 over 15 seasons against a 0.17 spread between batters |
 | Example batters' logistic estimates jumped from 0.034 to 0.057 after adding role and experience | The table in this README | The one-hot encoder keeps every level, so the reference role and experience coefficients had to be added | Logistic and hierarchical estimates compare like with like again |
 
 ## Data and licence
@@ -290,8 +313,9 @@ make test lint       # what CI runs: ruff and pytest, no MCMC
 ```
 
 The notebooks were run in order: `01_eda`, `02_baseline`, `03_hierarchical_pymc`,
-`04_season_drift`, `05_batting_role`. `03` is the first version, without the season,
-role and experience terms.
+`04_season_drift`, `05_batting_role`, `06_time_varying`. `03` is the first version,
+without the season, role and experience terms; `06` tests a model that was not adopted,
+so it has no counterpart in the package.
 `make results` reruns the analysis from the package code in `src/cricket_ba/` and is the
 source of the numbers above. It reproduces the notebooks' sampler diagnostics and
 baseline numbers exactly; the hierarchical numbers agree to the precision shown here,
@@ -303,7 +327,7 @@ seed (20261112), sampler settings and package versions are in
 src/cricket_ba/   parse.py (Cricsheet JSON to tables), features.py, baseline.py,
                   hierarchical.py (PyMC model), evaluate.py, pipeline.py
 notebooks/        01_eda, 02_baseline, 03_hierarchical_pymc, 04_season_drift,
-                  05_batting_role
+                  05_batting_role, 06_time_varying
 tests/            pytest, with four Cricsheet fixture matches
 results/          tables written by `make results` and the notebooks
 figures/          figures written by the notebooks

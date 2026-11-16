@@ -3,7 +3,7 @@
     python -m cricket_ba.pipeline            # or: make results
 
 Writes to ``results/`` and saves the posterior to ``models/hierarchical.nc``. MCMC takes
-about 5 minutes on 4 cores.
+about 10 minutes on 4 cores.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def run(json_dir: Path, out: Path, models: Path) -> None:
     name, C = baseline.choose(cv)
     feats = baseline.FEATURE_SETS[name]
     lr = baseline.logistic(feats, C).fit(train[feats], train["wicket"])
-    pred = test[["match_id", "batter_id", "bowler_id", "phase", "season", "wicket"]].copy()
+    pred = test[["match_id", *hierarchical.KEYS, "wicket"]].copy()
     pred["p_overall"] = train["wicket"].mean()
     pred["p_logistic"] = lr.predict_proba(test[feats])[:, 1]
     cv.to_csv(out / "baseline_cv.csv", index=False)
@@ -60,6 +60,8 @@ def run(json_dir: Path, out: Path, models: Path) -> None:
         raise NotImplementedError("cross-validation chose venue; the package model omits it")
 
     # ---- hierarchical model -----------------------------------------------------------
+    free = [f"{t}_free" for t in hierarchical.TERMS]
+    effs = [f"{t}_eff" for t in hierarchical.TERMS]
     idx = hierarchical.make_index(train)
     cells = hierarchical.aggregate(train, idx)
     t0 = time.time()
@@ -67,7 +69,7 @@ def run(json_dir: Path, out: Path, models: Path) -> None:
     minutes = (time.time() - t0) / 60
     summ = az.summary(
         idata,
-        var_names=["alpha", "sigma_bat", "sigma_bowl", "beta", "z_bat", "z_bowl"],
+        var_names=["alpha", "sigma_bat", "sigma_bowl", "beta", "z_bat", "z_bowl", *free],
         round_to=None,
     )
     diag = {
@@ -79,7 +81,7 @@ def run(json_dir: Path, out: Path, models: Path) -> None:
     }
     print("diagnostics:", diag)
     params = az.summary(
-        idata, var_names=["alpha", "sigma_bat", "sigma_bowl", "beta"], round_to=None
+        idata, var_names=["alpha", "sigma_bat", "sigma_bowl", "beta", *effs], round_to=None
     )
     params.to_csv(out / "hierarchical_parameters.csv")
 
@@ -176,9 +178,13 @@ def run(json_dir: Path, out: Path, models: Path) -> None:
     # ---- example batters ----------------------------------------------------------------
     oh = lr[0].named_transformers_["onehot"]
     coef = pd.Series(lr[-1].coef_[0], index=oh.get_feature_names_out(feats))
+    # middle overs, average bowler; for role and experience the reference levels of the
+    # hierarchical model (top order, 500+ earlier balls), so the two columns compare
+    ref = [f"{t}_{hierarchical.LEVELS[t][0]}" for t in hierarchical.TERMS if t in feats]
     lr_bat = expit(
         lr[-1].intercept_[0]
         + coef["phase_middle"]
+        + coef[ref].sum()
         + coef[[f"batter_id_{b}" for b in idx.batters]].to_numpy()
     )
     # hierarchical estimates at the level of the last training season

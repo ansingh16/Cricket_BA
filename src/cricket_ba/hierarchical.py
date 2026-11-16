@@ -1,11 +1,13 @@
 """Hierarchical logistic model with partially pooled batter and bowler effects.
 
     logit p = alpha[phase] + sigma_bat * z_bat[batter] + sigma_bowl * z_bowl[bowler]
-              + beta * (season - 2016) / 10
+              + beta * (season - 2016) / 10 + role[role] + experience[experience]
 
 Non-centred: z ~ N(0, 1). The linear season term was chosen on 2023 as a validation season
-in ``notebooks/04_season_drift.ipynb``. The likelihood is binomial on
-(batter, bowler, phase, season) cells,
+in ``notebooks/04_season_drift.ipynb``. Role (from batting position) and experience (IPL
+balls faced in earlier matches) are fixed effects with the first level as reference,
+tested in ``notebooks/05_batting_role.ipynb``; ``TERMS`` lists those in use. The likelihood
+is binomial on cells of balls that share every covariate,
 which gives the same posterior as a Bernoulli likelihood on the individual balls, since
 the two differ by a constant that does not involve the parameters
 (``tests/test_hierarchical.py`` checks this).
@@ -18,11 +20,14 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 import pymc as pm
+import pytensor.tensor as pt
 from scipy.special import expit, logit
 
-from cricket_ba.features import PHASES
+from cricket_ba.features import EXPERIENCE, PHASES, ROLES
 
-KEYS = ["batter_id", "bowler_id", "phase", "season"]
+LEVELS = {"role": ROLES, "experience": EXPERIENCE}
+TERMS: tuple[str, ...] = ("role", "experience")
+KEYS = ["batter_id", "bowler_id", "phase", "season", *TERMS]
 SAMPLER = dict(draws=1000, tune=1000, chains=4, cores=4, target_accept=0.95)
 SEASON_CENTRE = 2016
 
@@ -50,11 +55,16 @@ def aggregate(balls: pd.DataFrame, idx: Index | None = None) -> pd.DataFrame:
         cells["bat_idx"] = idx.batters.get_indexer(cells["batter_id"])
         cells["bowl_idx"] = idx.bowlers.get_indexer(cells["bowler_id"])
         cells["phase_idx"] = idx.phases.get_indexer(cells["phase"])
+        for t in TERMS:
+            cells[f"{t}_idx"] = pd.Index(LEVELS[t]).get_indexer(cells[t])
     return cells
 
 
 def build_model(cells: pd.DataFrame, idx: Index, observed: bool = True) -> pm.Model:
     coords = {"phase": list(idx.phases), "batter": list(idx.batters), "bowler": list(idx.bowlers)}
+    for t in TERMS:
+        coords[t] = list(LEVELS[t])
+        coords[f"{t}_vs_ref"] = list(LEVELS[t][1:])
     with pm.Model(coords=coords) as model:
         alpha = pm.Normal("alpha", mu=logit(0.05), sigma=0.5, dims="phase")
         sigma_bat = pm.HalfNormal("sigma_bat", 0.5)
@@ -70,6 +80,10 @@ def build_model(cells: pd.DataFrame, idx: Index, observed: bool = True) -> pm.Mo
             + bowl[cells["bowl_idx"].to_numpy()]
             + beta * season_x(cells["season"])
         )
+        for t in TERMS:
+            free = pm.Normal(f"{t}_free", 0, 0.5, dims=f"{t}_vs_ref")
+            eff = pm.Deterministic(f"{t}_eff", pt.concatenate([pt.zeros(1), free]), dims=t)
+            eta = eta + eff[cells[f"{t}_idx"].to_numpy()]
         pm.Binomial(
             "k",
             n=cells["n"].to_numpy(),
@@ -95,6 +109,7 @@ class Draws:
     sigma_bat: np.ndarray  # S
     sigma_bowl: np.ndarray  # S
     beta: np.ndarray  # S
+    effects: dict[str, np.ndarray] = field(default_factory=dict)  # term -> levels x S
 
     @classmethod
     def from_idata(cls, idata) -> Draws:
@@ -106,6 +121,11 @@ class Draws:
             sigma_bat=post["sigma_bat"].to_numpy(),
             sigma_bowl=post["sigma_bowl"].to_numpy(),
             beta=post["beta"].to_numpy(),
+            effects={
+                t: post[f"{t}_eff"].transpose(t, "s").to_numpy()
+                for t in TERMS
+                if f"{t}_eff" in post
+            },
         )
 
 
@@ -128,4 +148,6 @@ def predict_draws(cells: pd.DataFrame, idx: Index, draws: Draws, seed: int) -> n
     eta += bat_all[bat_index.get_indexer(cells["batter_id"])]
     eta += bowl_all[bowl_index.get_indexer(cells["bowler_id"])]
     eta += season_x(cells["season"])[:, None] * draws.beta
+    for t, eff in draws.effects.items():
+        eta += eff[pd.Index(LEVELS[t]).get_indexer(cells[t])]
     return expit(eta)

@@ -6,7 +6,15 @@ import pymc as pm
 from scipy.special import logit
 from scipy.stats import bernoulli
 
-from cricket_ba.hierarchical import Draws, aggregate, build_model, make_index, predict_draws
+from cricket_ba.hierarchical import (
+    LEVELS,
+    TERMS,
+    Draws,
+    aggregate,
+    build_model,
+    make_index,
+    predict_draws,
+)
 
 
 def _balls(seed=0, n=3000):
@@ -17,6 +25,8 @@ def _balls(seed=0, n=3000):
             "bowler_id": r.choice([f"w{i}" for i in range(10)], n),
             "phase": r.choice(["powerplay", "middle", "death"], n),
             "season": r.choice([2010, 2016, 2023], n),
+            "role": r.choice(list(LEVELS["role"]), n),
+            "experience": r.choice(list(LEVELS["experience"]), n),
             "wicket": r.binomial(1, 0.05, n),
         }
     )
@@ -31,6 +41,7 @@ def _point(idx, seed):
         "z_bat": r.normal(size=len(idx.batters)),
         "z_bowl": r.normal(size=len(idx.bowlers)),
         "beta": r.normal(0, 0.3),
+        **{f"{t}_free": r.normal(0, 0.3, len(LEVELS[t]) - 1) for t in TERMS},
     }
 
 
@@ -55,6 +66,9 @@ def test_binomial_on_cells_equals_bernoulli_on_balls_up_to_a_constant():
             + np.exp(pt["sigma_bowl_log__"]) * pt["z_bowl"][b["bowl_idx"]]
             + pt["beta"] * (b["season"] - 2016) / 10
         )
+        for t in TERMS:
+            eff = np.concatenate([[0.0], pt[f"{t}_free"]])
+            eta = eta + eff[pd.Index(LEVELS[t]).get_indexer(b[t])]
         return bernoulli.logpmf(b["wicket"], 1 / (1 + np.exp(-eta))).sum()
 
     gaps = []
@@ -93,6 +107,8 @@ def test_predictions_cover_unseen_players():
             "bowler_id": ["w0", "w1", "new_bowler"],
             "phase": ["death", "middle", "powerplay"],
             "season": [2024, 2024, 2025],
+            "role": ["top", "tail", "middle"],
+            "experience": ["500+", "<100", "100-499"],
             "wicket": [0, 1, 0],
         }
     )
@@ -126,3 +142,30 @@ def test_season_trend_shifts_predictions_by_beta_per_decade():
     )
     lp = logit(predict_draws(cells, idx, draws, seed=0))
     assert np.allclose(lp[1] - lp[0], 0.5)
+
+
+def test_fixed_effects_shift_the_logit():
+    balls = _balls()
+    idx = make_index(balls)
+    S = 3
+    draws = Draws(
+        alpha=np.full((3, S), -3.0),
+        bat=np.zeros((len(idx.batters), S)),
+        bowl=np.zeros((len(idx.bowlers), S)),
+        sigma_bat=np.full(S, 0.3),
+        sigma_bowl=np.full(S, 0.3),
+        beta=np.zeros(S),
+        effects={"role": np.array([[0.0] * S, [0.1] * S, [0.2] * S, [0.4] * S])},
+    )
+    cells = pd.DataFrame(
+        {
+            "batter_id": ["b0", "b0"],
+            "bowler_id": ["w0", "w0"],
+            "phase": ["middle"] * 2,
+            "season": [2016] * 2,
+            "role": ["top", "tail"],
+            "experience": ["500+"] * 2,
+        }
+    )
+    lp = logit(predict_draws(cells, idx, draws, seed=0))
+    assert np.allclose(lp[1] - lp[0], 0.4)

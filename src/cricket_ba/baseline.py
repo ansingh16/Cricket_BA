@@ -14,6 +14,14 @@ from cricket_ba.evaluate import scores
 FEATURE_SETS = {
     "batter+bowler+phase": ["batter_id", "bowler_id", "phase"],
     "batter+bowler+phase+venue": ["batter_id", "bowler_id", "phase", "venue_clean"],
+    "batter+bowler+phase+role": ["batter_id", "bowler_id", "phase", "role"],
+    "batter+bowler+phase+role+experience": [
+        "batter_id",
+        "bowler_id",
+        "phase",
+        "role",
+        "experience",
+    ],
 }
 C_GRID = (0.003, 0.01, 0.03, 0.1, 0.3, 1.0)
 

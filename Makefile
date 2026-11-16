@@ -6,7 +6,7 @@ setup:            ## create .venv from uv.lock
 data:             ## download the Cricsheet IPL JSON (one request, skipped if present)
 	uv run python scripts/download_data.py
 
-results: data     ## rebuild every table in results/ from the raw JSON (MCMC, ~5 min)
+results: data     ## rebuild every table in results/ from the raw JSON (MCMC, ~10 min)
 	uv run python -m cricket_ba.pipeline
 
 test:

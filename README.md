@@ -7,7 +7,7 @@ of IPL ball-by-ball data and compares it, on later seasons it has not seen, with
 L2-regularised logistic regression.
 
 **Short answer.** On point prediction the two models are close to a tie: the
-hierarchical model's test log loss is lower by 0.00018, a 0.09% improvement whose 95%
+hierarchical model's test log loss is lower by 0.00019, a 0.10% improvement whose 95%
 interval excludes zero but not by much. What the Bayesian model adds is honest uncertainty:
 every player gets an interval that is wide when the data is thin and narrow when it is
 not, and those intervals cover roughly the share of outcomes they claim to. The largest
@@ -21,21 +21,25 @@ gain in prediction is for batters the model has never seen.
 * **Split by time, never at random.** Train on 2008 to 2023 (234,995 balls), test on
   2024 and 2025 (32,806 balls). In the test seasons 12.7% of balls involve a batter, and
   11.2% a bowler, who never appears in training.
+* **Covariates known before the ball.** Phase (powerplay, middle, death); batting role
+  from batting position (top 1-3, middle 4-5, lower 6-7, tail 8-11), where position is
+  the order in which batters came in; and IPL experience, the legal balls the batter
+  faced in earlier matches (under 100, 100 to 499, 500 or more).
 * **Baselines.** The overall training rate, the rate per phase, and an L2 logistic
-  regression on one-hot batter, bowler and phase (powerplay, middle, death). Its penalty
-  and feature set were chosen by expanding-window cross-validation over 2019 to 2023:
-  C = 0.03, and venue was left out because it did not lower validation log loss.
+  regression on one-hot batter, bowler, phase, role and experience. Its penalty and
+  feature set were chosen by expanding-window cross-validation over 2019 to 2023:
+  C = 0.03; role and experience lowered validation log loss, venue did not.
 * **Hierarchical model.**
   `logit p = alpha[phase] + sigma_bat * z_bat[batter] + sigma_bowl * z_bowl[bowler]
-  + beta * (season - 2016) / 10`,
+  + beta * (season - 2016) / 10 + role[role] + experience[experience]`,
   with `z ~ N(0, 1)` (non-centred) and half-normal priors on the two pooling scales,
   which are learnt from the data. A player first seen in the test seasons gets a fresh
-  effect drawn from `N(0, sigma)`. The linear season term was added after the first
-  version (see *Season drift* below).
+  effect drawn from `N(0, sigma)`. The season, role and experience terms were added
+  after the first version (see *Season drift* and *Batting role and experience* below).
 * **Making NUTS fast without approximating.** The linear predictor depends only on
-  (batter, bowler, phase, season), so a Bernoulli likelihood on the 234,995 balls equals
-  a binomial likelihood on the 54,132 cells up to a constant. Same posterior, about four
-  minutes to sample. `tests/test_hierarchical.py` checks the equality numerically.
+  (batter, bowler, phase, season, role, experience), so a Bernoulli likelihood on the
+  234,995 balls equals a binomial likelihood on the 56,153 cells up to a constant. Same
+  posterior, about eleven minutes to sample. `tests/test_hierarchical.py` checks the equality numerically.
 
 ## Results
 
@@ -46,20 +50,21 @@ seasons.
 |---|---|---|---|---|
 | Overall training rate | 0.19973 | 0.04784 | 0.0465 | 0.0504 |
 | Rate per phase | 0.19805 | 0.04766 | 0.0463 | 0.0504 |
-| Logistic L2 (batter, bowler, phase) | 0.19726 | 0.04759 | 0.0485 | 0.0504 |
-| Hierarchical (PyMC) | **0.19708** | **0.04757** | 0.0498 | 0.0504 |
+| Logistic L2 (batter, bowler, phase, role, experience) | 0.19701 | 0.04756 | 0.0473 | 0.0504 |
+| Hierarchical (PyMC) | **0.19681** | **0.04754** | 0.0498 | 0.0504 |
 
 Hierarchical minus logistic, with 95% intervals from 1,000 bootstrap resamples of whole
-matches: log loss **-0.00018** (-0.00033 to -0.00005), Brier score -0.000015 (-0.000030
-to +0.000000). The log-loss gain is real but tiny; the Brier difference cannot be told
-apart from zero. In the first version, without the season term, the log-loss difference
-was -0.00013 (-0.00026 to -0.00001).
+matches: log loss **-0.00019** (-0.00037 to -0.00002), Brier score -0.000016 (-0.000037
+to +0.000002). The log-loss gain is real but tiny; the Brier difference cannot be told
+apart from zero. Adding role and experience improved both models (logistic 0.19726 to
+0.19701, hierarchical 0.19708 to 0.19681). The first version, with no season, role or
+experience terms, gave hierarchical 0.19713 against logistic 0.19726.
 
 The phase-rate row comes from `results/baseline_test_metrics.csv`, written by
 `notebooks/02_baseline.ipynb`; the other rows from `results/test_metrics.csv`.
 
 **Sampler.** 4 chains of 1,000 draws after 1,000 tuning steps, `target_accept` 0.95: no
-divergences, R-hat at most 1.01, bulk effective sample size at least 1,027 for every
+divergences, R-hat at most 1.01, bulk effective sample size at least 896 for every
 parameter.
 
 ### Where the hierarchical model helps
@@ -69,20 +74,19 @@ hierarchical minus logistic; negative favours the hierarchical model):
 
 | Player | Training balls | Test balls | Difference | 95% interval |
 |---|---|---|---|---|
-| batter | unseen | 4,160 | -0.00074 | -0.00126 to -0.00033 |
-| batter | 1-99 | 2,741 | -0.00002 | -0.00095 to +0.00088 |
-| batter | 100-499 | 8,639 | -0.00013 | -0.00038 to +0.00015 |
-| batter | 500+ | 17,266 | -0.00013 | -0.00029 to +0.00004 |
-| bowler | unseen | 3,685 | +0.00010 | -0.00027 to +0.00044 |
-| bowler | 1-99 | 1,646 | -0.00007 | -0.00069 to +0.00058 |
-| bowler | 100-499 | 8,033 | -0.00023 | -0.00058 to +0.00006 |
-| bowler | 500+ | 19,442 | -0.00022 | -0.00039 to -0.00005 |
+| batter | unseen | 4,160 | -0.00075 | -0.00143 to -0.00023 |
+| batter | 1-99 | 2,741 | +0.00028 | -0.00075 to +0.00126 |
+| batter | 100-499 | 8,639 | -0.00012 | -0.00041 to +0.00018 |
+| batter | 500+ | 17,266 | -0.00019 | -0.00041 to +0.00003 |
+| bowler | unseen | 3,685 | +0.00006 | -0.00051 to +0.00059 |
+| bowler | 1-99 | 1,646 | +0.00008 | -0.00073 to +0.00089 |
+| bowler | 100-499 | 8,033 | -0.00018 | -0.00060 to +0.00018 |
+| bowler | 500+ | 19,442 | -0.00027 | -0.00048 to -0.00006 |
 
 The clearest gain is for batters new in the test seasons. The logistic model treats a
 new batter as exactly average; the hierarchical model knows how far from average a new
-batter tends to be, and averages over that. With the season term this gain doubled (it
-was -0.00031 without it), because new batters were the most under-predicted group (see
-*Season drift*). For thin but seen players the intervals are wide and include zero. I expected the gain to be largest for thin players, and the data
+batter tends to be, and averages over that. For thin but seen players the intervals are
+wide and include zero. I expected the gain to be largest for thin players, and the data
 does not show that clearly.
 
 ### Estimates for thin and well-known players
@@ -90,26 +94,28 @@ does not show that clearly.
 ![Raw rates against both models' estimates](figures/shrinkage_batters.png)
 
 Each point is a batter's wicket probability against an average bowler in the middle
-overs (the figure is from `03_hierarchical_pymc`, before the season term; the numbers
-below are from `make results` and use the 2023 season level). Raw rates for batters with
-under 100 training balls have a standard deviation of 0.150 (some are 0, some are 1).
-Both models pull them hard towards the average; the L2 logistic regression pulls even
-harder (standard deviation 0.0013 against 0.0028), with
+overs (the figure is from `03_hierarchical_pymc`, the first version of the model). The
+numbers below are from `make results`: for both models they are for a top-order batter
+with 500 or more earlier balls, the reference levels, and the hierarchical ones use the
+2023 season level. Raw rates for batters with under 100 training balls have a standard
+deviation of 0.150 (some are 0, some are 1). Both models pull them hard towards the
+average; the L2 logistic regression pulls even harder (standard deviation 0.0013 against
+0.0017), with
 one penalty for every player and no measure of how unsure it is. The hierarchical model
 says how unsure it is:
 
 | Batter | Training balls | Wickets | Raw rate | Logistic | Hierarchical mean | 80% interval |
 |---|---|---|---|---|---|---|
-| V Kohli | 5,568 | 186 | 0.0334 | 0.0339 | 0.0330 | 0.0301 to 0.0361 |
-| S Dhawan | 5,181 | 170 | 0.0328 | 0.0343 | 0.0342 | 0.0308 to 0.0375 |
-| RG Sharma | 4,759 | 198 | 0.0416 | 0.0380 | 0.0392 | 0.0359 to 0.0426 |
-| LPC Silva | 26 | 2 | 0.0769 | 0.0436 | 0.0472 | 0.0356 to 0.0603 |
-| T Thushara | 18 | 1 | 0.0556 | 0.0428 | 0.0453 | 0.0342 to 0.0575 |
-| Basil Thampi | 35 | 1 | 0.0286 | 0.0418 | 0.0428 | 0.0328 to 0.0537 |
+| V Kohli | 5,568 | 186 | 0.0334 | 0.0344 | 0.0348 | 0.0317 to 0.0379 |
+| S Dhawan | 5,181 | 170 | 0.0328 | 0.0345 | 0.0356 | 0.0324 to 0.0390 |
+| RG Sharma | 4,759 | 198 | 0.0416 | 0.0387 | 0.0423 | 0.0386 to 0.0462 |
+| LPC Silva | 26 | 2 | 0.0769 | 0.0420 | 0.0454 | 0.0361 to 0.0556 |
+| T Thushara | 18 | 1 | 0.0556 | 0.0410 | 0.0439 | 0.0350 to 0.0539 |
+| Basil Thampi | 35 | 1 | 0.0286 | 0.0398 | 0.0422 | 0.0337 to 0.0513 |
 
 The three thin batters were drawn at random (fixed seed) from those with 15 to 40
-training balls. The median width of an 80% interval is 0.0244 for batters with under 100
-training balls and 0.0120 for those with 500 or more.
+training balls. The median width of an 80% interval is 0.0189 for batters with under 100
+training balls and 0.0118 for those with 500 or more.
 
 ### Are the intervals calibrated?
 
@@ -119,10 +125,10 @@ phases). How often does the real total land inside the central interval?
 
 | Players | Model | n | 50% | 80% | 95% |
 |---|---|---|---|---|---|
-| batters | hierarchical | 109 | 0.59 (PIT 0.47) | 0.85 (PIT 0.84) | 0.97 (PIT 0.96) |
-| batters | logistic plug-in | 109 | 0.50 (PIT 0.39) | 0.80 (PIT 0.77) | 0.94 (PIT 0.93) |
-| bowlers | hierarchical | 112 | 0.55 (PIT 0.45) | 0.86 (PIT 0.79) | 0.97 (PIT 0.97) |
-| bowlers | logistic plug-in | 112 | 0.53 (PIT 0.41) | 0.79 (PIT 0.72) | 0.96 (PIT 0.95) |
+| batters | hierarchical | 109 | 0.59 (PIT 0.48) | 0.86 (PIT 0.84) | 0.97 (PIT 0.95) |
+| batters | logistic plug-in | 109 | 0.55 (PIT 0.45) | 0.83 (PIT 0.77) | 0.95 (PIT 0.93) |
+| bowlers | hierarchical | 112 | 0.54 (PIT 0.44) | 0.87 (PIT 0.81) | 0.98 (PIT 0.97) |
+| bowlers | logistic plug-in | 112 | 0.52 (PIT 0.45) | 0.78 (PIT 0.72) | 0.96 (PIT 0.95) |
 
 "Logistic plug-in" is binomial noise around the logistic point predictions, with no
 parameter uncertainty. Wicket totals are whole numbers, so an interval with inclusive
@@ -132,8 +138,8 @@ of about 4 percentage points, and the simulation adds about 1 to 2 points of Mon
 noise (the notebook and the pipeline differ by that much). So the 80% and 95% intervals
 are about right for both models; the hierarchical ones are, if anything, slightly wide,
 and this test is too small to say that one is better calibrated than the other. The 50%
-PIT figures are below 0.5 in every row, which points to the under-prediction of new
-batters described under *Season drift*.
+PIT figures are below 0.5 in every row, which points to the remaining under-prediction
+of new batters (see *Batting role and experience*).
 
 ![Calibration on the test seasons](figures/calibration_test.png)
 
@@ -159,33 +165,72 @@ validation season and scoring the test seasons only at the end.
   decade on the logit scale (94% HDI -0.009 to 0.094). Against the same model without
   it, the log-loss change is -0.000055 (95% interval -0.000114 to +0.000007), so the
   trend fixes the average but is not a clear gain ball by ball.
-* **The remaining gap is new batters.** Test balls split by whether the batter and bowler
-  were seen in training (`results/test_gap_by_new_player.csv`):
+* **The remaining gap was new batters.** Split by whether the batter and bowler were seen
+  in training, balls with two seen players were well predicted (4.96% against 4.91%
+  observed), but batters new in 2024-25 were out on 6.30% of balls against seen bowlers,
+  where the model predicted 5.26% and the logistic baseline 5.00%.
+
+### Batting role and experience
+
+`notebooks/05_batting_role.ipynb` asks why new batters were under-predicted. New batters
+are a little more often tail-enders (10.5% of their balls, against 6.4% for seen
+batters), but they were out more often in every role: top-order newcomers on 5.9% of
+balls against 4.4% for seen top-order batters. So the notebook tests IPL experience as
+well as role.
+
+![Wicket rate by batting position, and by role and experience](figures/role_experience.png)
+
+* **Both matter.** In the package model, fewer than 100 earlier IPL balls adds 0.20 on
+  the logit scale (94% HDI 0.13 to 0.25) against 500 or more, and 100 to 499 adds 0.09.
+  Given each batter's own effect, role adds less than the raw rates suggest (middle order
+  -0.11, lower -0.09, tail +0.02 against the top order), because a tail-ender's own
+  effect already carries most of it. The batter pooling scale falls from 0.22 to 0.17:
+  part of what the first model called individual skill was experience.
+* **A change of protocol, disclosed.** I first chose on 2023 alone, as in `04`. There the
+  package model was slightly ahead (difference +0.000056, interval -0.00019 to +0.00030),
+  but the test seasons then favoured role and experience clearly. The two disagreed
+  because the hierarchical variants were being chosen on one season, while the logistic
+  baseline had always used five; on one season these differences are well inside the
+  noise. Rather than adopt the terms on the strength of the test, I gave the hierarchical
+  model the same five-season validation. It favours role and experience (mean log loss
+  0.188385 against 0.188425; better in 2 of 5 seasons; pooled difference -0.000047,
+  interval -0.00017 to +0.00008), as the logistic baseline's own cross-validation had. So
+  they are in both models. Because the protocol changed after the test seasons had been
+  seen, the test gains in this README should be read as slightly optimistic. From here
+  on, both model families are chosen by the same five-season validation.
+* **The new-batter gap narrows.** Test balls split by whether the batter and bowler were
+  seen in training (`results/test_gap_by_new_player.csv`):
 
 | Batter | Bowler | Balls | Observed | Logistic | Hierarchical |
 |---|---|---|---|---|---|
-| seen | seen | 25,473 | 0.0491 | 0.0487 | 0.0496 |
-| seen | new | 3,173 | 0.0448 | 0.0459 | 0.0479 |
-| new | seen | 3,648 | 0.0630 | 0.0500 | 0.0526 |
-| new | new | 512 | 0.0566 | 0.0485 | 0.0524 |
+| seen | seen | 25,473 | 0.0491 | 0.0469 | 0.0489 |
+| seen | new | 3,173 | 0.0448 | 0.0437 | 0.0471 |
+| new | seen | 3,648 | 0.0630 | 0.0528 | 0.0569 |
+| new | new | 512 | 0.0566 | 0.0505 | 0.0563 |
 
-Both models treat a new batter as an average batter, but new batters are out far more
-often, probably because most of them bat in the lower order. A batting-role term is the
-next step.
+* **Experience and the season trend overlap.** In 2008 every batter has no earlier IPL
+  balls, so experience is partly a calendar variable; with it in the model, the season
+  trend rises from 0.042 to 0.095 per decade (94% HDI 0.042 to 0.150).
+* **The batter-spread misfit was not role.** The posterior predictive check (batters with
+  100 or more training balls) puts the observed spread of batter rates at the 3rd
+  percentile of the replicated spread with role and experience, and at the 2nd without
+  them, in the notebook's version of the check.
 
 ## Limitations
 
-* **New batters are under-predicted.** Batters first seen in 2024-25 were out on 6.3%
-  of balls against seen bowlers; the hierarchical model predicts 5.3% and the logistic
-  model 5.0%. The season term fixed the overall average (4.98% predicted, 5.04% observed)
-  but not this.
+* **New batters are still under-predicted.** Batters first seen in 2024-25 were out on
+  6.3% of balls against seen bowlers; with role and experience the hierarchical model
+  predicts 5.7% and the logistic model 5.3%.
+* **The test seasons are no longer untouched.** Role and experience were adopted after a
+  change of validation protocol made once the test results were known (see *Batting
+  role and experience*). The test gains are therefore slightly optimistic.
 * **The model expects batters to differ slightly more than they do.** The posterior
   predictive check puts the observed spread of batter rates (batters with 100 or more
-  balls) at the 5th percentile of the replicated spread. A likely cause is batting role:
-  openers and tail-enders face very different balls and the model has no term for it.
+  balls) in the lowest few percent of the replicated spread. Batting role was tested as a
+  cause and is not it.
 * **Player skill is held fixed over 16 training seasons.** A batter's 2010 form counts
   the same as his 2023 form. A time-varying effect would be the natural next step.
-* **Bowler effects are small and hard to pin down** (pooling scale 0.068 against 0.219
+* **Bowler effects are small and hard to pin down** (pooling scale 0.067 against 0.172
   for batters, on the log-odds scale), so the bowler side of the model adds little.
 * **Venue was dropped** because cross-validation did not support it, and the package
   model has no venue term.
@@ -203,7 +248,10 @@ next step.
 | 59 venue names for 38 grounds (renamed stadiums) | Listing the distinct venue names | `clean_venue` map in `features.py` | 59 names reduce to 38 |
 | Posterior predictive check reported the 0th percentile | The implausible number in a trial run | Counts were grouped in `pd.factorize` order but divided in sorted order; fixed the alignment (`03`) | Check now reads the 5th percentile, a real but mild misfit |
 | Test seasons under-predicted (4.85% against 5.04%) | Mean prediction against observed rate | Linear season term, chosen on 2023 validation (`04`) | Mean prediction 4.98%; gain over logistic -0.00013 to -0.00018 log loss |
-| The remaining gap sat with one group | Split test balls by seen and new players (`04`) | Next: batting-role term | Located: new batters out 6.3%, predicted 5.0 to 5.3% |
+| The remaining gap sat with one group | Split test balls by seen and new players (`04`) | Role and experience terms (`05`) | New batters out 6.3%; prediction 5.26% before, 5.69% after |
+| Role alone could not explain the new-batter gap | Split new and seen batters by role: newcomers were out more in every role (`05`) | Added IPL experience (earlier balls faced) | Fewer than 100 earlier balls: +0.20 logit (0.13 to 0.25) |
+| The two model families were chosen by different validation (one season against five) | 2023 and the test seasons disagreed about role and experience | Same five-season validation for both; disclosed as a change made after seeing the test | Role and experience chosen by both; test gains flagged as optimistic |
+| Example batters' logistic estimates jumped from 0.034 to 0.057 after adding role and experience | The table in this README | The one-hot encoder keeps every level, so the reference role and experience coefficients had to be added | Logistic and hierarchical estimates compare like with like again |
 
 ## Data and licence
 
@@ -237,12 +285,13 @@ Needs [uv](https://docs.astral.sh/uv/) and a C compiler (PyTensor compiles the m
 ```
 uv sync --locked     # .venv with the exact versions in uv.lock
 make data            # download the Cricsheet JSON
-make results         # parse, fit both models, write results/ (about 5 minutes on 8 cores)
+make results         # parse, fit both models, write results/ (about 8 minutes on 8 cores)
 make test lint       # what CI runs: ruff and pytest, no MCMC
 ```
 
 The notebooks were run in order: `01_eda`, `02_baseline`, `03_hierarchical_pymc`,
-`04_season_drift`. `03` is the first version, without the season term.
+`04_season_drift`, `05_batting_role`. `03` is the first version, without the season,
+role and experience terms.
 `make results` reruns the analysis from the package code in `src/cricket_ba/` and is the
 source of the numbers above. It reproduces the notebooks' sampler diagnostics and
 baseline numbers exactly; the hierarchical numbers agree to the precision shown here,
@@ -253,7 +302,8 @@ seed (20261112), sampler settings and package versions are in
 ```
 src/cricket_ba/   parse.py (Cricsheet JSON to tables), features.py, baseline.py,
                   hierarchical.py (PyMC model), evaluate.py, pipeline.py
-notebooks/        01_eda, 02_baseline, 03_hierarchical_pymc, 04_season_drift
+notebooks/        01_eda, 02_baseline, 03_hierarchical_pymc, 04_season_drift,
+                  05_batting_role
 tests/            pytest, with four Cricsheet fixture matches
 results/          tables written by `make results` and the notebooks
 figures/          figures written by the notebooks
@@ -271,9 +321,11 @@ timestamps.
 against the data, surveyed all 1,169 match files for edge cases (super overs, miscounted
 overs, penalty runs, no-results), wrote the new parser and its tests, drafted and ran
 the three notebooks, ported the code into `src/cricket_ba/`, and wrote the CI workflow
-and a first draft of this README. In a second session, a day later, it ran the
-season-drift analysis (`04_season_drift`), ported the chosen season term into the package
-and updated the results here.
+and a first draft of this README. In later sessions (13 and 16 November) it ran the
+follow-up notebooks from `04_season_drift` on, ported the chosen terms into the package
+and updated the results here. The change of validation protocol in `05` was its
+proposal, made when the 2023 choice and the test seasons disagreed, and it is disclosed
+above.
 
 **What I decided.** The question and the framing (that the case for the Bayesian model is
 uncertainty and thin-data players, not accuracy), the time split, the rule that every

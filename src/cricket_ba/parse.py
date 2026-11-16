@@ -10,7 +10,9 @@ https://cricsheet.org/format/json/ . Facts this parser relies on, checked agains
   (a penalty-only record does count as a ball);
 * super-over innings carry ``"super_over": true``;
 * ``season`` is a label such as ``"2007/08"`` or ``"2020/21"``; the calendar year of the
-  match date is the IPL season.
+  match date is the IPL season;
+* batting position is not stored. It is the order in which batters first appear in the
+  innings, as striker or non-striker (the opening striker is 1, the other opener 2).
 """
 
 from __future__ import annotations
@@ -76,11 +78,14 @@ def match_deliveries(data: dict, match_id: int) -> list[dict]:
         bowling = teams[1] if batting == teams[0] else teams[0]
         super_over = bool(inn.get("super_over", False))
         legal_in_innings = 0
+        position: dict[str, int] = {}
 
         for over in inn.get("overs", []):
             over_no = over["over"]  # 0-based in the JSON
             legal_in_over = 0
             for d_idx, d in enumerate(over["deliveries"], start=1):
+                for name in (d["batter"], d["non_striker"]):
+                    position.setdefault(name, len(position) + 1)
                 extras = d.get("extras", {})
                 legal = not ({"wides", "noballs"} & extras.keys())
                 if legal:
@@ -112,6 +117,7 @@ def match_deliveries(data: dict, match_id: int) -> list[dict]:
                     "batter": d["batter"],
                     "bowler": d["bowler"],
                     "non_striker": d["non_striker"],
+                    "bat_position": position[d["batter"]],
                     "batter_id": people.get(d["batter"]),
                     "bowler_id": people.get(d["bowler"]),
                     "non_striker_id": people.get(d["non_striker"]),

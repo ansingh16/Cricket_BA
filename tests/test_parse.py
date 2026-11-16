@@ -153,3 +153,16 @@ def test_season_is_calendar_year(parsed):
     m = matches.set_index("match_id")
     assert m.loc[335988, "season_label"] == "2007/08"
     assert m.loc[335988, "season"] == 2008
+
+
+def test_batting_positions(parsed):
+    """Openers are 1 and 2; each later batter needs a wicket or retirement to come in."""
+    _, d = parsed
+    for _, inn in d[~d["is_super_over"]].groupby(["match_id", "innings"]):
+        first = inn.iloc[0]
+        assert first["bat_position"] == 1
+        names = pd.concat([inn["batter"], inn["non_striker"]]).unique()
+        assert len(names) <= inn["n_wickets"].sum() + 2
+        pos = inn.drop_duplicates("batter").set_index("batter")["bat_position"]
+        assert pos.is_unique and pos.between(1, 11).all()
+        assert pos.max() <= len(names)
